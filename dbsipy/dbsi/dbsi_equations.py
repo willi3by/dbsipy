@@ -1,14 +1,14 @@
 import numpy as np
 import scipy.optimize as optimize
-from dbsi.dbsi_utilities import *
+from dbsipy.dbsi.dbsi_utilities import *
 
 def diffusion_basis_eq_1(c_array, lambda_perp, lambda_par, d_iso, s_k, b_k, theta_ik):
     ## How do we get term_1 to be of shape (26,)??
     ## c_i is (95,), (np.exp(-np.abs(b_k)*lambda_perp)) is (26,), and
     ## (np.exp(-np.abs(b_k)*(lambda_par-lambda_perp)*(np.cos(theta_ik)**2))) is (95,26)
     ## Params for this part will be [c_i, c_iso]
-    c_i = c_array[:95]
-    c_iso = c_array[95]
+    c_i = c_array[:-1]
+    c_iso = c_array[-1]
     term_1_part_2 =(np.exp(-np.abs(b_k)*lambda_perp))
     term_1_part_3 = (np.exp(-np.abs(b_k)*(lambda_par-lambda_perp)*(np.cos(theta_ik)**2)))
     term_1 = np.dot(c_i, term_1_part_3)*term_1_part_2
@@ -23,8 +23,8 @@ def diffusion_basis_eq_2(diffusivity_array, c_array, s_k, b_k, theta_ik):
     ## c_i is (95,), (np.exp(-np.abs(b_k)*lambda_perp)) is (26,), and
     ## (np.exp(-np.abs(b_k)*(lambda_par-lambda_perp)*(np.cos(theta_ik)**2))) is (95,26)
     ## Params for this part will be [c_i, c_iso]
-    c_i = c_array[:95]
-    c_iso = c_array[95]
+    c_i = c_array[:-1]
+    c_iso = c_array[-1]
     lambda_perp = diffusivity_array[0]
     lambda_par = diffusivity_array[1]
     d_iso = diffusivity_array[2]
@@ -41,16 +41,19 @@ def diffusion_basis_eq_2(diffusivity_array, c_array, s_k, b_k, theta_ik):
 def optimize_c_array(basis_tensors, bvecs, bvals, s_k, init_lambda_perp=0.0003,
                      init_lambda_par=0.0005, init_diso=0.0006):
 
-    c_array = np.full((basis_tensors.shape[0]+1,), 1 / (basis_tensors.shape[0]+1))
+    # c_array = np.full((basis_tensors.shape[0]+1,), 1 / (basis_tensors.shape[0]+1))
+    center = 225
+    norm = np.random.normal(center, center / 3, size=(basis_tensors.shape[0]+1))
+    c_array = np.where(norm < 0, 0, norm)
     theta_ik = np.zeros((len(basis_tensors), len(bvals)))
     for i in range(len(bvecs)):
         theta_i = np.apply_along_axis(angle_between, 1, basis_tensors, bvecs[i])
         theta_ik[:, i] = theta_i
 
-    bounds = [(0, None) for i in range(len(c_array))]
-    b_k = bvals
+    bounds = [(0, np.inf) for i in range(len(c_array))]
+
     opt_c_array = optimize.minimize(diffusion_basis_eq_1, c_array,
-                                    args=(init_lambda_perp, init_lambda_par, init_diso, s_k, b_k, theta_ik),
+                                    args=(init_lambda_perp, init_lambda_par, init_diso, s_k, bvals, theta_ik),
                                     bounds=bounds).x
     return opt_c_array
 
@@ -70,27 +73,33 @@ def optimize_diffusivity_array(basis_tensors, bvecs, bvals, s_k, opt_c_array, in
 
     return opt_diffusivity_array
 
+
 def build_M_matrix(aniso_tensors, bvecs, bvals, lambda_perps, lambda_pars, a=0, b=5e-6, L=20):
 
+    
+    # always compute the isotropic matrix
+    b = 5e-3
     v = (b - a) / (L - 1)
     diff_spectrum = np.arange(a, b + v, v)
-    aniso_matrix = np.zeros((len(bvals), len(aniso_tensors)))
-    b_k = bvals
-    for i in range(len(aniso_tensors)):
-        aniso_tensor = aniso_tensors[i]
-        theta = np.apply_along_axis(angle_between, 1, bvecs, aniso_tensor)
-        lambda_perp_i = lambda_perps[i]
-        lambda_par_i = lambda_pars[i]
-        m_col = np.exp(-np.abs(b_k) * lambda_perp_i) * np.exp(
-            -np.abs(b_k) * (lambda_par_i - lambda_perp_i) * (np.cos(theta) ** 2))
-        aniso_matrix[:, i] = m_col
-
-    iso_matrix = np.zeros((len(b_k), len(diff_spectrum)))
+    iso_matrix = np.zeros((len(bvals), len(diff_spectrum)))
     for i, val in enumerate(diff_spectrum):
-        l_col = np.exp(-np.abs(b_k)*val)
+        l_col = np.exp(-np.abs(bvals)*val)
         iso_matrix[:,i] = l_col
+    m_matrix = iso_matrix
 
-    m_matrix = np.concatenate([aniso_matrix, iso_matrix], axis=1)
+    # if there are any anisotropic tensors, add them to the matrix
+    if np.abs(np.sum(aniso_tensors)) > 0:
+        aniso_matrix = np.zeros((len(bvals), len(aniso_tensors)))
+        for i in range(len(aniso_tensors)):
+            aniso_tensor = aniso_tensors[i]
+            theta = np.apply_along_axis(angle_between, 1, bvecs, aniso_tensor)
+            lambda_perp_i = lambda_perps[i]
+            lambda_par_i = lambda_pars[i]
+            m_col = np.exp(-np.abs(bvals) * lambda_perp_i) * np.exp(-np.abs(bvals) * (lambda_par_i - lambda_perp_i) * (np.cos(theta) ** 2))
+            aniso_matrix[:, i] = m_col
+        
+        m_matrix = np.concatenate([aniso_matrix, m_matrix], axis=1)
+
     return m_matrix
 
 def fiber_fraction_eq_1(f_i, m_matrix, s_k, mu=0.01):
@@ -112,7 +121,10 @@ def optimize_fiber_fraction(aniso_tensors, bvecs, bvals, diffusivity_array, s_k)
     lambda_perps = diffusivity_array[:len(aniso_tensors)]
     lambda_pars = diffusivity_array[len(aniso_tensors):]
     m_matrix = build_M_matrix(aniso_tensors, bvecs, bvals, lambda_perps, lambda_pars)
-    f_i = np.full((m_matrix.shape[1],), 1 / m_matrix.shape[1])
+    # f_i = np.full((m_matrix.shape[1],), 1 / m_matrix.shape[1])
+    center = 300
+    norm = np.random.normal(center, center / 3, size=(m_matrix.shape[1]))
+    f_i = np.where(norm < 0, 0, norm)
     bounds = [(0, None) for i in range(len(f_i))]
     opt_f_i = optimize.minimize(fiber_fraction_eq_1, f_i, args=(m_matrix, s_k), bounds=bounds).x
     return opt_f_i
@@ -123,6 +135,3 @@ def optimize_fiber_diffusivities(diffusivity_array, aniso_tensors, bvecs, bvals,
                                               args=(aniso_tensors, bvecs, bvals, opt_f_i, s_k),
                                               bounds=bounds).x
     return opt_diffusivity_array
-
-
-

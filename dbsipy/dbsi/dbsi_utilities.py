@@ -19,6 +19,7 @@ def angle_between(v1, v2):
     return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
 def cluster_aniso_c_array(aniso_c_array):
+    # possibly use [1,2] for n_components 
     n_components = [1, 2, 3, 4, 5]
     all_bic = []
     for i in n_components:
@@ -64,10 +65,10 @@ def calc_fa(eig_1, eig_2, eig_3):
     return fa
 
 def extract_metrics(opt_f_i, opt_fiber_diffusivities, L=20):
-    opt_f_i_perc = opt_f_i/np.sum(opt_f_i)
+    opt_f_i_perc = opt_f_i
     aniso_ff_length = len(opt_f_i) - L
     aniso_ff = opt_f_i_perc[0:aniso_ff_length]
-    max_aniso_idx = np.where(aniso_ff == np.max(aniso_ff))
+    max_aniso_idx = aniso_ff.argmax()
     primary_aniso_ff = aniso_ff[max_aniso_idx]
     iso_ff_idxs = opt_f_i_perc[aniso_ff_length:]
     restricted_ff = np.sum(iso_ff_idxs[0:2])
@@ -77,7 +78,6 @@ def extract_metrics(opt_f_i, opt_fiber_diffusivities, L=20):
     axial_diffusivities = opt_fiber_diffusivities[aniso_ff_length:]
     primary_radial_diffusivity = radial_diffusivities[max_aniso_idx]
     primary_axial_diffusivity = axial_diffusivities[max_aniso_idx]
-    fa = calc_fa(primary_axial_diffusivity, primary_radial_diffusivity, primary_radial_diffusivity)[0]
+    fa = calc_fa(primary_axial_diffusivity, primary_radial_diffusivity, primary_radial_diffusivity)
 
-    return fa, primary_aniso_ff, primary_axial_diffusivity, primary_radial_diffusivity, restricted_ff, hindered_ff, free_water_ff
-
+    return fa, primary_aniso_ff, primary_axial_diffusivity, primary_radial_diffusivity, restricted_ff, hindered_ff, free_water_ff, iso_ff_idxs
